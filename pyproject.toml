@@ -1,0 +1,18 @@
+[project]
+name = "mcp-showcases"
+version = "0.1.0"
+description = "A collection of Model Context Protocol (MCP) tools for high-value workflows."
+authors = [
+    {name = "ssghost", email = "ssprof0@gmail.com"},
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pandas>=2.0.0"
+]
+requires-python = "==3.13.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
