@@ -8,6 +8,14 @@ from mcp.client.stdio import stdio_client
 API_URL = "http://localhost:11234/v1"
 MODEL_NAME = "gemma-3-4b"
 
+def clean_schema(schema):
+    if isinstance(schema, dict):
+        return {k: clean_schema(v) for k, v in schema.items() if k != "title"}
+    elif isinstance(schema, list):
+        return [clean_schema(v) for v in schema]
+    else:
+        return schema
+
 async def run():
     client = AsyncOpenAI(base_url=API_URL, api_key="dummy")
     
@@ -26,7 +34,7 @@ async def run():
             "function": {
                 "name": t.name, 
                 "description": t.description, 
-                "parameters": t.inputSchema
+                "parameters": clean_schema(t.inputSchema)
             }
         } for t in mcp_tools.tools]
         
@@ -34,7 +42,7 @@ async def run():
         messages = [{"role": "system", "content": "You are a Data Analyst using local tools."}]
 
         while True:
-            if (user_input := input("\n👤 You: ").strip()) == "exit": break
+            if (user_input := input("\nYou: ").strip()) == "exit": break
             messages.append({"role": "user", "content": user_input})
 
             response = await client.chat.completions.create(

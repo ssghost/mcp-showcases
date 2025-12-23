@@ -1,0 +1,1 @@
+pdm run python packages/pandas-analyst/src/client.py
