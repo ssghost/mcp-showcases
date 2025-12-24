@@ -23,13 +23,11 @@ def parse_mistral_tools(content):
     try:
         json_str = content.split("[TOOL_CALLS]")[1].strip()
         tools_data = json.loads(json_str)
-        
-        return [
-            FakeToolCall(t['name'], t['arguments'], f"call_{i}") 
-            for i, t in enumerate(tools_data)
-        ]
+        if isinstance(tools_data, dict):
+            tools_data = [tools_data]
+        return [FakeToolCall(t['name'], t['arguments'], f"call_{i}") for i, t in enumerate(tools_data)]
     except Exception as e:
-        print(f"Failed to parse Mistral tool string: {e}")
+        print(f"Debug: Failed to parse Mistral tools: {e}.")
         return None
 
 def clean_schema(schema):
@@ -43,10 +41,25 @@ def clean_schema(schema):
 def extract_code_from_markdown(content):
     if not content:
         return None
-    pattern = r"```(?:\w+)?\s*\n([\s\S]*?)```"
+    
+    pattern = r"```(?:[\w\+]+)?\s*(.*?)```"
     matches = re.findall(pattern, content, re.DOTALL)
+
     if matches:
-        return matches[-1].strip()
+        code = matches[-1].strip()
+        lines = code.split('\n')
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            last_line = lines[-1].strip()
+            if (not last_line.startswith("#") 
+                and "print" not in last_line 
+                and "=" not in last_line):
+                
+                print(f"Auto-wrapping last line in print(): {last_line}.")
+                lines[-1] = f"print({last_line})"
+                code = "\n".join(lines)        
+        return code
     return None
 
 async def run():
@@ -79,14 +92,6 @@ async def run():
             - ALWAYS write complete, executable Python code. 
             - ALWAYS print() the final result.
             - NEVER modify file paths.
-            EXAMPLES:
-            User: "Calculate correlation between BTC and ETH close prices."
-            Assistant: import pandas as pd
-            df = pd.read_csv('data/real_crypto_2024.csv')
-            btc = df[df['symbol']=='BTC']['Close'].reset_index(drop=True)
-            eth = df[df['symbol']=='ETH']['Close'].reset_index(drop=True)
-            corr = btc.corr(eth)
-            print(f"Correlation Coefficient: {corr}")
             """}]
 
         while True:
