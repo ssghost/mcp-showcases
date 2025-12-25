@@ -1,0 +1,150 @@
+import asyncio
+import os
+import re
+import json
+from openai import AsyncOpenAI
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+API_URL = "http://localhost:11434/v1"
+MODEL_NAME = "mistral-nemo"
+
+class FakeToolCall:
+    def __init__(self, name, args, call_id):
+        self.id = call_id
+        self.function = lambda: None
+        self.function.name = name
+        self.function.arguments = json.dumps(args) if isinstance(args, dict) else args
+
+def parse_mistral_tools(content):
+    if not content or "[TOOL_CALLS]" not in content:
+        return None
+    
+    try:
+        json_str = content.split("[TOOL_CALLS]")[1].strip()
+        tools_data = json.loads(json_str)
+        if isinstance(tools_data, dict):
+            tools_data = [tools_data]
+        return [FakeToolCall(t['name'], t['arguments'], f"call_{i}") for i, t in enumerate(tools_data)]
+    except Exception as e:
+        print(f"Debug: Failed to parse Mistral tools: {e}.")
+        return None
+
+def clean_schema(schema):
+    if isinstance(schema, dict):
+        return {k: clean_schema(v) for k, v in schema.items() if k != "title"}
+    elif isinstance(schema, list):
+        return [clean_schema(v) for v in schema]
+    else:
+        return schema
+    
+def extract_code_from_markdown(content):
+    if not content:
+        return None
+    
+    pattern = r"```(?:[\w\+]+)?\s*(.*?)```"
+    matches = re.findall(pattern, content, re.DOTALL)
+
+    if matches:
+        code = matches[-1].strip()
+        lines = code.split('\n')
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            last_line = lines[-1].strip()
+            if (not last_line.startswith("#") 
+                and "print" not in last_line 
+                and "=" not in last_line):
+                
+                print(f"Auto-wrapping last line in print(): {last_line}.")
+                lines[-1] = f"print({last_line})"
+                code = "\n".join(lines)        
+        return code
+    return None
+
+async def run():
+    client = AsyncOpenAI(base_url=API_URL, api_key="dummy")
+    
+    server_params = StdioServerParameters(
+        command="pdm", 
+        args=["run", "python", "packages/solana-inspector/src/server.py"],
+        env=os.environ.copy()
+    )
+
+    async with stdio_client(server_params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        mcp_tools = await session.list_tools()
+        
+        openai_tools = [{
+            "type": "function",
+            "function": {
+                "name": t.name, 
+                "description": t.description, 
+                "parameters": clean_schema(t.inputSchema)
+            }
+        } for t in mcp_tools.tools]
+        
+        print(f"Ready! Tools: {[t.name for t in mcp_tools.tools]}")
+        messages = [{"role": "system", "content": """You are a helpful AI Assistant.
+            You have access to tools to interact with the real world (e.g., Solana Blockchain).
+            RULES:
+            1. If the user asks for a wallet balance, use the `get_balance` tool.
+            2. Always answer in a concise way.
+            """}]
+
+        while True:
+            if (user_input := input("\nYou: ").strip()) == "exit": break
+            messages.append({"role": "user", "content": user_input})
+
+            try:
+                response = await client.chat.completions.create(
+                    model=MODEL_NAME, messages=messages, tools=openai_tools
+                )
+                msg = response.choices[0].message
+                content = msg.content
+                if not msg.tool_calls:
+                    tool_calls = parse_mistral_tools(content)
+                else:
+                    tool_calls = msg.tool_calls
+                
+                if not tool_calls and content:
+                    extracted_code = extract_code_from_markdown(content)
+                    if extracted_code:
+                        print("   (Detected Markdown code block. Auto-executing...)")
+                        tool_calls = [FakeToolCall("execute_pandas_code", {"code": extracted_code}, "call_markdown")]
+
+                if tool_calls:
+                    if not tool_calls: 
+                        messages.append({"role": "assistant", "content": content})
+                    else:
+                        messages.append(msg)
+
+                    for tool in tool_calls:
+                        print(f"Call: {tool.function.name}({tool.function.arguments})")
+                        args = json.loads(tool.function.arguments)
+                        if "filepath" in args:
+                            args["filepath"] = args["filepath"].lstrip("/")
+                            if not args["filepath"].startswith("data/"):
+                                args["filepath"] = os.path.join("data", args["filepath"])
+                        
+                        if tool.function.name == "execute_pandas_code":
+                            print(f"Code:\n{args.get('code')}")
+
+                        result = await session.call_tool(tool.function.name, arguments=args)
+                        result_text = result.content[0].text
+                        print(f"Output: {result_text[:200]}..." if len(result_text)>200 else f"Output: {result_text}")
+                        messages.append({"role": "tool", "tool_call_id": tool.id, "content": result.content[0].text})
+                
+                    final_res = await client.chat.completions.create(model=MODEL_NAME, messages=messages)
+                    print(f"\nAgent: {final_res.choices[0].message.content}")
+                    messages.append(final_res.choices[0].message)
+                else:
+                    print(f"\nAgent: {msg.content}")
+
+            except Exception as e:
+                print(f"Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+if __name__ == "__main__":
+    asyncio.run(run())

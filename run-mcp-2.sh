@@ -1,0 +1,1 @@
+pdm run python packages/solana-inspector/src/client.py
