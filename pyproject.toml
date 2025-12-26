@@ -11,6 +11,7 @@ dependencies = [
     "tabulate>=0.9.0",
     "pandas-analyst @ file:///${PROJECT_ROOT}/packages/pandas-analyst",
     "solana-inspector @ file:///${PROJECT_ROOT}/packages/solana-inspector",
+    "crypto-quant @ file:///${PROJECT_ROOT}/packages/crypto-quant",
 ]
 requires-python = "==3.13.*"
 readme = "README.md"

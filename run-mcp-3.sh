@@ -1,0 +1,1 @@
+pdm run python packages/crypto-quant/src/client.py
