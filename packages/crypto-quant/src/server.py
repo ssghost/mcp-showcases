@@ -92,21 +92,36 @@ def backtest_rsi_strategy(ticker: str, lower_bound: int = 30, upper_bound: int =
         df['Cumulative_Market'] = (1 + df['Market_Return'].fillna(0)).cumprod()
         df['Cumulative_Strategy'] = (1 + df['Strategy_Return'].fillna(0)).cumprod()
         
-        total_strategy_return = df['Cumulative_Strategy'].iloc[-1] - 1
-        total_market_return = df['Cumulative_Market'].iloc[-1] - 1
+        total_strategy = df['Cumulative_Strategy'].iloc[-1] - 1
+        total_market = df['Cumulative_Market'].iloc[-1] - 1
+        strategy_mean = df['Strategy_Return'].mean()
+        strategy_std = df['Strategy_Return'].std()
         
+        if strategy_std != 0:
+            sharpe_ratio = (strategy_mean / strategy_std) * (365 ** 0.5)
+        else:
+            sharpe_ratio = 0.0
+
+        rolling_max = df['Cumulative_Strategy'].cummax()
+        drawdown = (df['Cumulative_Strategy'] - rolling_max) / rolling_max
+        max_drawdown = drawdown.min()
+
+        start_date = df.index[0].strftime('%Y-%m-%d')
+        end_date = df.index[-1].strftime('%Y-%m-%d')
+
         return (
-            f"Backtest Results for {ticker} (RSI {lower_bound}/{upper_bound})\n"
-            f"---------------------------------------------------\n"
-            f"Strategy Total Return : {total_strategy_return:.2%}\n"
-            f"Buy & Hold Return     : {total_market_return:.2%}\n"
-            f"---------------------------------------------------\n"
-            f"Logic: Long when RSI < {lower_bound}, Close when RSI > {upper_bound}\n"
-            f"Data Range: Last 500 working days"
-        )
+            f"Backtest Results for {ticker} (Binance Data)\n"
+            f"----------------------------------------\n"
+            f"Period: {start_date} to {end_date} ({len(df)} days)\n\n"
+            f"Performance Metrics:\n"
+            f"  • Strategy Return : {total_strategy:.2%}  (vs Buy&Hold: {total_market:.2%})\n"
+            f"  • Sharpe Ratio    : {sharpe_ratio:.2f}    (Risk-Adjusted Return)\n"
+            f"  • Max Drawdown    : {max_drawdown:.2%}    (Worst peak-to-valley loss)\n"
+            f"----------------------------------------\n"
+            f"Logic: Long when RSI < {lower_bound}, Close when RSI > {upper_bound}.")
 
     except Exception as e:
-        return f"Error during backtest: {str(e)}."
+        return f"Error during backtest: {str(e)}\n{traceback.format_exc()}."
 
 if __name__ == "__main__":
     mcp.run()
