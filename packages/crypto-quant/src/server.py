@@ -67,26 +67,22 @@ def calculate_indicators(ticker: str) -> str:
         return f"Error calculating indicators: {str(e)}"
 
 @mcp.tool()
-def backtest_rsi_strategy(ticker: str, lower_bound: int = 30, upper_bound: int = 70) -> str:
+def backtest(ticker: str, strategy: str = "rsi", **kwargs) -> str:
     try:
         df = get_data(ticker) 
-        
         if df.empty:
-            return "Error: No data found."
+            return f"Error: No data found for {ticker}."
 
-        df['RSI'] = df.ta.rsi(length=14)
-        df['Position'] = 0
-        current_pos = 0
+        STRATEGY_MAP = {
+            "rsi": rsi_strategy
+        }
         
-        positions = []
-        for rsi in df['RSI']:
-            if rsi < lower_bound:
-                current_pos = 1 
-            elif rsi > upper_bound:
-                current_pos = 0 
-            positions.append(current_pos)
-            
-        df['Position'] = positions
+        selected_strategy_fn = STRATEGY_MAP.get(strategy.lower())
+        if not selected_strategy_fn:
+            return f"Error: Strategy '{strategy}' not found."
+
+        df = selected_strategy_fn(df, **kwargs)
+
         df['Market_Return'] = df['Close'].pct_change()
         df['Strategy_Return'] = df['Position'].shift(1) * df['Market_Return']
         df['Cumulative_Market'] = (1 + df['Market_Return'].fillna(0)).cumprod()
@@ -94,34 +90,46 @@ def backtest_rsi_strategy(ticker: str, lower_bound: int = 30, upper_bound: int =
         
         total_strategy = df['Cumulative_Strategy'].iloc[-1] - 1
         total_market = df['Cumulative_Market'].iloc[-1] - 1
+        
         strategy_mean = df['Strategy_Return'].mean()
         strategy_std = df['Strategy_Return'].std()
-        
-        if strategy_std != 0:
-            sharpe_ratio = (strategy_mean / strategy_std) * (365 ** 0.5)
-        else:
-            sharpe_ratio = 0.0
+        sharpe_ratio = (strategy_mean / strategy_std) * (365 ** 0.5) if strategy_std != 0 else 0.0
 
         rolling_max = df['Cumulative_Strategy'].cummax()
-        drawdown = (df['Cumulative_Strategy'] - rolling_max) / rolling_max
-        max_drawdown = drawdown.min()
+        max_drawdown = ((df['Cumulative_Strategy'] - rolling_max) / rolling_max).min()
 
         start_date = df.index[0].strftime('%Y-%m-%d')
         end_date = df.index[-1].strftime('%Y-%m-%d')
 
         return (
-            f"Backtest Results for {ticker} (Binance Data)\n"
+            f"Backtest Results: {ticker} | Strategy: {strategy.upper()}\n"
             f"----------------------------------------\n"
-            f"Period: {start_date} to {end_date} ({len(df)} days)\n\n"
+            f"Period: {start_date} to {end_date}\n\n"
             f"Performance Metrics:\n"
-            f"  • Strategy Return : {total_strategy:.2%}  (vs Buy&Hold: {total_market:.2%})\n"
-            f"  • Sharpe Ratio    : {sharpe_ratio:.2f}    (Risk-Adjusted Return)\n"
-            f"  • Max Drawdown    : {max_drawdown:.2%}    (Worst peak-to-valley loss)\n"
+            f"  • Strategy Return : {total_strategy:.2%} (vs B&H: {total_market:.2%})\n"
+            f"  • Sharpe Ratio    : {sharpe_ratio:.2f}\n"
+            f"  • Max Drawdown    : {max_drawdown:.2%}\n"
             f"----------------------------------------\n"
-            f"Logic: Long when RSI < {lower_bound}, Close when RSI > {upper_bound}.")
+            f"Applied Strategy Parameters: {kwargs}") 
 
     except Exception as e:
-        return f"Error during backtest: {str(e)}\n{traceback.format_exc()}."
+        return f"Error during backtest: {str(e)}"
+    
+def rsi_strategy(df: pd.DataFrame, lower_bound: int = 30, upper_bound: int = 70) -> pd.DataFrame:
+    df['RSI'] = df.ta.rsi(length=14)
+    df['Position'] = 0
+    current_pos = 0
+    positions = []
+    
+    for rsi in df['RSI']:
+        if rsi < lower_bound:
+            current_pos = 1 
+        elif rsi > upper_bound:
+            current_pos = 0 
+        positions.append(current_pos)
+        
+    df['Position'] = positions
+    return df
 
 if __name__ == "__main__":
     mcp.run()
